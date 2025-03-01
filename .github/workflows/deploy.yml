@@ -1,0 +1,103 @@
+name: Build and Deploy to Kubernetes
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # 수동 트리거 옵션 추가
+
+env:
+  REGISTRY: 192.168.55.197:5000  # 로컬 Docker Registry 주소
+  BACKEND_IMAGE: hello-world-backend
+  FRONTEND_IMAGE: hello-world-frontend
+  NAMESPACE: hello-world-app
+  KUBERNETES_CONTEXT: kubernetes-admin@kubernetes  # 실제 kubeconfig context로 변경하세요
+
+jobs:
+  build-and-deploy:
+    runs-on: self-hosted  # Self-hosted Runner 사용
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          driver: docker
+
+      - name: Set up kubectl
+        run: |
+          # kubectl이 이미 설치되어 있다고 가정합니다
+          kubectl version --client
+
+      - name: Build and push Backend Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }},${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest
+          cache-to: type=inline
+
+      - name: Build and push Frontend Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }},${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest
+          cache-to: type=inline
+
+      - name: Update Kubernetes manifests
+        run: |
+          # 이미지 태그 업데이트
+          sed -i "s|image: hello-world-backend:latest|image: ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}|g" k8s/backend-deployment.yaml
+          sed -i "s|image: hello-world-frontend:latest|image: ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}|g" k8s/frontend-deployment.yaml
+
+      - name: Create namespace if not exists
+        run: |
+          kubectl get namespace ${{ env.NAMESPACE }} || kubectl create namespace ${{ env.NAMESPACE }}
+
+      - name: Deploy to Kubernetes
+        run: |
+          # ConfigMap 및 Secret 적용
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/secret.yaml
+          kubectl apply -f k8s/nginx-configmap.yaml
+          
+          # MySQL 배포
+          kubectl apply -f k8s/mysql-deployment.yaml
+          
+          # MySQL이 준비될 때까지 대기 (최대 2분)
+          echo "Waiting for MySQL to be ready..."
+          kubectl wait --for=condition=ready pod -l app=mysql -n ${{ env.NAMESPACE }} --timeout=120s
+          
+          # 백엔드 및 프론트엔드 배포
+          kubectl apply -f k8s/backend-deployment.yaml
+          kubectl apply -f k8s/frontend-deployment.yaml
+          
+          # Nginx 배포
+          kubectl apply -f k8s/nginx-deployment.yaml
+          
+          # Ingress 배포 (선택 사항)
+          if [ -f k8s/ingress.yaml ]; then
+            kubectl apply -f k8s/ingress.yaml
+          fi
+
+      - name: Verify deployment
+        run: |
+          echo "Checking deployment status..."
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl get svc -n ${{ env.NAMESPACE }}
+          
+          # Nginx 서비스의 외부 IP 또는 NodePort 확인
+          echo "Access your application at:"
+          kubectl get svc nginx -n ${{ env.NAMESPACE }}
+
+      - name: Cleanup old images (optional)
+        if: success()
+        run: |
+          echo "Cleaning up old images from registry..."
+          # 이 부분은 로컬 레지스트리 API를 사용하여 오래된 이미지를 정리하는 스크립트를 추가할 수 있습니다
+          # 예: curl -X DELETE http://localhost:5000/v2/${{ env.BACKEND_IMAGE }}/manifests/[old-tag] 
