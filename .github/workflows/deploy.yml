@@ -9,7 +9,7 @@ on:
   workflow_dispatch:  # 수동 트리거 옵션 추가
 
 env:
-  REGISTRY: 192.168.55.197:5000  # 로컬 Docker Registry 주소
+  REGISTRY: http://192.168.55.197:5000  # 로컬 Docker Registry 주소
   BACKEND_IMAGE: hello-world-backend
   FRONTEND_IMAGE: hello-world-frontend
   NAMESPACE: hello-world-app
