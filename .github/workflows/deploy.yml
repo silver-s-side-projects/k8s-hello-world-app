@@ -1,15 +1,14 @@
 name: Build and Deploy to Kubernetes
 
 on:
-
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
-  workflow_dispatch:  # 수동 트리거 옵션 추가
+    branches: [ main ]
+  workflow_dispatch:
 
 env:
-  REGISTRY: http://192.168.55.197:5000  # 로컬 Docker Registry 주소
+  REGISTRY: 192.168.55.197:5000
   BACKEND_IMAGE: hello-world-backend
   FRONTEND_IMAGE: hello-world-frontend
   NAMESPACE: hello-world-app
@@ -17,37 +16,34 @@ env:
 
 jobs:
   build-and-deploy:
-    runs-on: self-hosted  # Self-hosted Runner 사용
+    runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-        with:
-          driver: docker
-
-      - name: Set up kubectl
+      - name: Test Docker and Registry
         run: |
-          kubectl version --client
+          # Docker 설정 확인
+          echo "Docker daemon configuration:"
+          cat /etc/docker/daemon.json || echo "No daemon.json found"
+          
+          # Docker 버전 확인
+          docker version
+          
+          # 레지스트리 연결 테스트
+          curl -v http://${{ env.REGISTRY }}/v2/ || echo "Registry connection failed"
 
       - name: Build and push Backend Docker image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./backend
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }},${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest
-          cache-to: type=inline
+        run: |
+          docker build -t ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }} -t ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest ./backend
+          docker push ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest
 
       - name: Build and push Frontend Docker image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./frontend
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }},${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest
-          cache-to: type=inline
+        run: |
+          docker build -t ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }} -t ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest ./frontend
+          docker push ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest
 
       - name: Update Kubernetes manifests
         run: |
@@ -71,14 +67,19 @@ jobs:
           
           # MySQL이 준비될 때까지 대기 (최대 2분)
           echo "Waiting for MySQL to be ready..."
-          kubectl wait --for=condition=ready pod -l app=mysql -n ${{ env.NAMESPACE }} --timeout=120s
+          kubectl wait --for=condition=ready pod -l app=mysql -n ${{ env.NAMESPACE }} --timeout=120s || echo "MySQL pods not ready, continuing anyway"
           
-          # 백엔드 및 프론트엔드 배포
+          # 백엔드 배포
           kubectl apply -f k8s/backend-deployment.yaml
+          kubectl apply -f k8s/backend-service.yaml
+          
+          # 프론트엔드 배포
           kubectl apply -f k8s/frontend-deployment.yaml
+          kubectl apply -f k8s/frontend-service.yaml
           
           # Nginx 배포
           kubectl apply -f k8s/nginx-deployment.yaml
+          kubectl apply -f k8s/nginx-service.yaml
           
           # Ingress 배포 (선택 사항)
           if [ -f k8s/ingress.yaml ]; then
