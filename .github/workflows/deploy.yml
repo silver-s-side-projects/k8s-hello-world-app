@@ -2,9 +2,9 @@ name: Build and Deploy to Kubernetes
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:
 
 env:
@@ -12,7 +12,7 @@ env:
   BACKEND_IMAGE: hello-world-backend
   FRONTEND_IMAGE: hello-world-frontend
   NAMESPACE: hello-world-app
-  KUBERNETES_CONTEXT: kubernetes-admin@kubernetes  # 실제 kubeconfig context로 변경하세요
+  KUBERNETES_CONTEXT: default
 
 jobs:
   build-and-deploy:
