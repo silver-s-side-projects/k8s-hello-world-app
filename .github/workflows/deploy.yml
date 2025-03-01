@@ -1,10 +1,11 @@
 name: Build and Deploy to Kubernetes
 
 on:
+
   push:
-    branches: [ main ]
+    branches: [ master ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:  # 수동 트리거 옵션 추가
 
 env:
@@ -28,7 +29,6 @@ jobs:
 
       - name: Set up kubectl
         run: |
-          # kubectl이 이미 설치되어 있다고 가정합니다
           kubectl version --client
 
       - name: Build and push Backend Docker image
